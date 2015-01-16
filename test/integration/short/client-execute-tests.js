@@ -184,6 +184,20 @@ describe('Client', function () {
         }
       ], done);
     });
+    it('should encode CONTAINS parameter @c2_1', function (done) {
+      var client = newInstance();
+      client.execute(util.format('CREATE INDEX list_sample_index ON %s(list_sample)', table), function (err) {
+        assert.ifError(err);
+        var query = util.format('SELECT * FROM %s WHERE list_sample CONTAINS ? AND list_sample CONTAINS ? ALLOW FILTERING', table);
+        //valid params
+        var params = ['val1', 'val2'];
+        client.execute(query, params, function (err) {
+          //it should not fail
+          assert.ifError(err);
+          done();
+        });
+      });
+    });
   });
 });
 
@@ -208,7 +222,7 @@ function insertSelectTest(client, table, columns, values, hints, done) {
         assert.ok(result.rows && result.rows.length > 0, 'There should be a row');
         var row = result.rows[0];
         assert.strictEqual(row.values().length, values.length);
-        assert.strictEqual(row.keys().join(','), columnsSplit.join(','));
+        assert.strictEqual(row.keys().join(', '), columnsSplit.join(','));
         for (var i = 0; i < values.length; i++) {
           helper.assertValueEqual(values[i], row.get(i));
         }

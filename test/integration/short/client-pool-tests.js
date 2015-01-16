@@ -10,22 +10,6 @@ var errors = require('../../../lib/errors.js');
 
 describe('Client', function () {
   this.timeout(120000);
-  describe('constructor', function () {
-    it('should throw an exception when contactPoints are not provided', function () {
-      assert.throws(function () {
-        var client = new Client({});
-      });
-      assert.throws(function () {
-        var client = new Client({contactPoints: []});
-      });
-      assert.throws(function () {
-        var client = new Client(null);
-      });
-      assert.throws(function () {
-        var client = new Client();
-      });
-    });
-  });
   describe('#connect()', function () {
     before(helper.ccmHelper.start(3));
     after(helper.ccmHelper.remove);
@@ -122,7 +106,7 @@ describe('Client', function () {
           helper.ccmHelper.exec(['updateconf', "authenticator: PasswordAuthenticator"], next);
         },
         function (next) {
-          helper.ccmHelper.exec(['populate', '-n', '1'], next);
+          helper.ccmHelper.exec(['populate', '-n', '2'], next);
         },
         function (next) {
           helper.ccmHelper.exec(['start'], function () {
@@ -135,34 +119,58 @@ describe('Client', function () {
     after(helper.ccmHelper.remove);
     var PlainTextAuthProvider = require('../../../lib/auth/plain-text-auth-provider.js');
     it('should connect using the plain text authenticator', function (done) {
-      var options = utils.extend({}, helper.baseOptions, {authProvider: new PlainTextAuthProvider('cassandra', 'cassandra')});
-      var client = new Client(options);
+      var options = {authProvider: new PlainTextAuthProvider('cassandra', 'cassandra')};
+      var client = newInstance(options);
       async.times(100, function (n, next) {
         client.connect(next);
       }, function (err) {
         done(err);
       });
     });
-    it('should return an AuthenticationError', function (done) {
-      var options = utils.extend({}, helper.baseOptions, {authProvider: new PlainTextAuthProvider('not___EXISTS', 'not___EXISTS')});
-      var client = new Client(options);
-      client.connect(function (err) {
-        assert.ok(err);
-        helper.assertInstanceOf(err, errors.NoHostAvailableError);
-        assert.ok(err.innerErrors);
-        helper.assertInstanceOf(helper.values(err.innerErrors)[0], errors.AuthenticationError);
-        done();
+    it('should connect using the plain text authenticator when calling execute', function (done) {
+      var options = {authProvider: new PlainTextAuthProvider('cassandra', 'cassandra'), keyspace: 'system'};
+      var client = newInstance(options);
+      async.times(100, function (n, next) {
+        client.execute('SELECT * FROM schema_keyspaces', next);
+      }, function (err) {
+        done(err);
       });
+    });
+    it('should return an AuthenticationError', function (done) {
+      var options = {authProvider: new PlainTextAuthProvider('not___EXISTS', 'not___EXISTS'), keyspace: 'system'};
+      var client = newInstance(options);
+      async.timesSeries(10, function (n, next) {
+        client.connect(function (err) {
+          assert.ok(err);
+          helper.assertInstanceOf(err, errors.NoHostAvailableError);
+          assert.ok(err.innerErrors);
+          helper.assertInstanceOf(helper.values(err.innerErrors)[0], errors.AuthenticationError);
+          next();
+        });
+      }, done);
+    });
+    it('should return an AuthenticationError when calling execute', function (done) {
+      var options = {authProvider: new PlainTextAuthProvider('not___EXISTS', 'not___EXISTS'), keyspace: 'system'};
+      var client = newInstance(options);
+      async.times(10, function (n, next) {
+        client.execute('SELECT * FROM schema_keyspaces', function (err) {
+          assert.ok(err);
+          helper.assertInstanceOf(err, errors.NoHostAvailableError);
+          assert.ok(err.innerErrors);
+          helper.assertInstanceOf(helper.values(err.innerErrors)[0], errors.AuthenticationError);
+          next();
+        });
+      }, done);
     });
   });
   describe('#connect() with ssl', function () {
-    before(helper.ccmHelper.start(2, {ssl: true}));
+    before(helper.ccmHelper.start(1, {ssl: true}));
     after(helper.ccmHelper.remove);
     it('should connect to a ssl enabled cluster', function (done) {
       var client = newInstance({sslOptions: {}});
       client.connect(function (err) {
         assert.ifError(err);
-        assert.strictEqual(client.hosts.length, 2);
+        assert.strictEqual(client.hosts.length, 1);
         done();
       });
     });
@@ -189,7 +197,7 @@ describe('Client', function () {
       //on all hosts
       async.times(10, function (n, next) {
         //No matter what, the keyspace does not exists
-        client.execute('SELECT * FROM system.schema_keyspaces', function (err, result) {
+        client.execute('SELECT * FROM system.schema_keyspaces', function (err) {
           helper.assertInstanceOf(err, Error);
           next();
         });
@@ -197,7 +205,7 @@ describe('Client', function () {
     });
     it('should change the active keyspace after USE statement', function (done) {
       var client = newInstance();
-      client.execute('USE system', function (err, result) {
+      client.execute('USE system', function (err) {
         if (err) return done(err);
         assert.strictEqual(client.keyspace, 'system');
         //all next queries, the instance should still "be" in the system keyspace
@@ -208,8 +216,7 @@ describe('Client', function () {
     });
     it('should return ResponseError when executing USE with a wrong keyspace', function (done) {
       var client = newInstance();
-      var count = 0;
-      client.execute('USE ks_not_exist', function (err, result) {
+      client.execute('USE ks_not_exist', function (err) {
         assert.ok(err instanceof errors.ResponseError);
         assert.equal(client.keyspace, null);
         done();
@@ -391,10 +398,11 @@ describe('Client', function () {
       };
       var client = new Client(options);
       var hosts = {};
+      var query = 'SELECT * FROM system.schema_keyspaces';
       async.series([
         function warmUpPool(seriesNext) {
           async.times(10, function (n, next) {
-            client.execute('SELECT * FROM system.schema_keyspaces', function (err, result) {
+            client.execute(query, function (err, result) {
               assert.ifError(err);
               hosts[result._queriedHost] = true;
               next();
@@ -413,7 +421,10 @@ describe('Client', function () {
               helper.ccmHelper.exec(['node2', 'stop', '--not-gently'], function (err) {
                 killed = true;
                 assert.ifError(err);
-                next();
+                //do a couple of more queries
+                async.times(10, function (n, next2) {
+                  client.execute(query, next2);
+                }, next);
               });
               return;
             }
@@ -422,7 +433,7 @@ describe('Client', function () {
               return next();
             }
             issued++;
-            client.execute('SELECT * FROM system.schema_keyspaces', function (err, result) {
+            client.execute(query, function (err) {
               assert.ifError(err);
               counter++;
               next();

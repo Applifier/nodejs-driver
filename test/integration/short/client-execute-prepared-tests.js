@@ -6,6 +6,7 @@ var helper = require('../../test-helper.js');
 var Client = require('../../../lib/client.js');
 var types = require('../../../lib/types.js');
 var utils = require('../../../lib/utils.js');
+var errors = require('../../../lib/errors.js');
 
 describe('Client', function () {
   this.timeout(120000);
@@ -28,7 +29,7 @@ describe('Client', function () {
     it('should callback with error when query is invalid', function (done) {
       var client = newInstance();
       var query = 'SELECT WILL FAIL';
-      client.execute(query, ['system'], {prepare: 1}, function (err, result) {
+      client.execute(query, ['system'], {prepare: 1}, function (err) {
         assert.ok(err);
         assert.strictEqual(err.code, types.responseErrorCodes.syntaxError);
         assert.strictEqual(err.query, query);
@@ -67,6 +68,37 @@ describe('Client', function () {
           next();
         });
       }, done);
+    });
+    it('should fail following times if it fails to prepare', function (done) {
+      var client = newInstance();
+      async.series([function (seriesNext) {
+        //parallel
+        async.times(10, function (n, next) {
+          client.execute('SELECT * FROM system.table1', ['val'], {prepare: 1}, function (err) {
+            helper.assertInstanceOf(err, Error);
+            helper.assertInstanceOf(err, errors.ResponseError);
+            assert.strictEqual(err.code, types.responseErrorCodes.invalid);
+            next();
+          });
+        }, seriesNext);
+      }, function (seriesNext) {
+        async.timesSeries(10, function (n, next) {
+          client.execute('SELECT * FROM system.table2', ['val'], {prepare: 1}, function (err) {
+            helper.assertInstanceOf(err, Error);
+            helper.assertInstanceOf(err, errors.ResponseError);
+            assert.strictEqual(err.code, types.responseErrorCodes.invalid);
+            next();
+          });
+        }, seriesNext);
+      }], done);
+    });
+    it('should fail if the type does not match', function (done) {
+      var client = newInstance();
+      client.execute('SELECT * FROM system.schema_keyspaces where keyspace_name = ?', [1000], {prepare: 1}, function (err) {
+        helper.assertInstanceOf(err, Error);
+        helper.assertInstanceOf(err, TypeError);
+        done();
+      });
     });
     it('should serialize all guessed types', function (done) {
       var values = [types.uuid(), 'as', '111', null, new types.Long(0x1001, 0x0109AA), 1, new Buffer([1, 240]), true, new Date(1221111111), null, null, null, null];

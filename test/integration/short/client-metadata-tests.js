@@ -12,13 +12,13 @@ var DCAwareRoundRobinPolicy = loadBalancing.DCAwareRoundRobinPolicy;
 var TokenAwarePolicy = loadBalancing.TokenAwarePolicy;
 
 describe('Client', function () {
-  this.timeout(120000);
+  this.timeout(240000);
   describe('#getReplicas() with Murmur', function () {
     before(function (done) {
       var client = new Client(helper.baseOptions);
       var createQuery = "CREATE KEYSPACE %s WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1' : %d, 'dc2' : %d}";
       async.series([
-        helper.ccmHelper.start('4:4'),
+        helper.ccmHelper.start('4:4', {sleep: 1000}),
         function (next) {
           client.execute(util.format(createQuery, 'sampleks1', 2, 2), next);
         },
